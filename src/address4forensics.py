@@ -14,13 +14,13 @@ LOGICAL = 1001
 PHYSICAL = 1002
 CLUSTER = 1003
 
+
 def main():
     address4forensics(args)
 
 def address4forensics(args):
     modes = solveModes(args)
     calculate(modes)
-
 
 def calculate(mode):
     if(mode[0] == LOGICAL):
@@ -103,12 +103,16 @@ def calculateLogical(mode):
         else:
             # solve the logical address based on cluster information
             result = reservedSectors + (fatTables * fatLength) + (cluster - 2) * clusterSize
+            if(mode[1]):
+                result = result * sectorSize
             print result
             exit();
 
     elif(physical != -1):
         # solve logical address based on physical information
         result = physical - offset
+        if(mode[1]):
+            result = result * sectorSize
         print result
         exit();
     print "Unknown Error"
@@ -186,10 +190,14 @@ def calculatePhysical(mode):
         else:
             # solve the logical address based on cluster information
             result = offset + reservedSectors + (fatTables * fatLength) + ((cluster - 2) * clusterSize)
+            if(mode[1]):
+                result = reslut * sectorSize
             print result
             exit()
     elif(logical != -1):
         result = logical + offset
+        if(mode[1]):
+            result = result * sectorSize
         print result
         exit();
     print "Unknown Error"
@@ -210,7 +218,8 @@ def calculateCluster(mode):
 
     offset = mode[0]
     if(mode[1]):
-        sectorSize = mode[2]
+        print "Error: byte address is not compatible with this mode"
+        exit();
     else:
         sectorSize = DEFAULT_SECTOR_SIZE
     if(mode[3] != -1):
@@ -282,7 +291,7 @@ def solveModes(args):
     # 0
     mode.append(parseArgument(args,'-b','--partition-start=', -1))
     # this adds two values to the list
-    # 1, 2
+    # 1, 2; 1 is bool for byte-address, 2 is the sector size
     mode.extend(byteMode(args))
     #mode.append(parseArgument(args, '-s', '--sector-size=', DEFAULT_SECTOR_SIZE))
     # 3
@@ -325,7 +334,7 @@ def byteMode(args):
     byteMode = [False, DEFAULT_SECTOR_SIZE]
     pattern = re.compile('--sector-size=')
     for arg in args:
-        if arg == '-B' or arg == '--byte-address=':
+        if arg == '-B' or arg == '--byte-address':
             byteMode[0] = True
 
         # search for the size of sectors
