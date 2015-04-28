@@ -1,19 +1,17 @@
-import string
 import hashlib
-import sys
-import struct
 import os
+import string
+import struct
+import sys
 
-def main():
-    filePath = sys.argv[1]
-    printCheckSums(filePath)
-    analyzeImage(filePath)
-
+#Opens file to obtain checksums, no operations in this module
 def printCheckSums(filePath):
-    md5 = hashlib.md5(open(filePath, 'rb').read()).hexdigest()
-    sha1 = hashlib.sha1(open(filePath, 'rb').read()).hexdigest()
 
+    filePointer = open(filePath, 'rb')
     fileName = os.path.splitext(filePath)[0]
+
+    md5 = hashlib.md5(filePointer.read()).hexdigest()
+    sha1 = hashlib.sha1(filePointer.read()).hexdigest()
 
     md5File = open("MD5-" + fileName + ".txt", "w+")
     shaFile = open("SHA1-" + fileName + ".txt", "w+")
@@ -21,18 +19,57 @@ def printCheckSums(filePath):
     md5File.write(md5)
     shaFile.write(sha1)
 
+    filePointer.close()
     md5File.close()
     shaFile.close()
 
     print 'Checksums: '
     print '=' * 50
-    print "MD5:  " + md5
+    print "MD5:  " + md5 + '\n'
     print "SHA1: " + sha1
     print '=' * 50
 
+#Contains the data structs and calls analyzePartitionEntry and analyzeVBR functions
 def analyzeImage(filePath):
 
+    '''
+    The partitionEntryStruct has 8 fields for 16 bytes, these 8 are
+
+    partitionEntryStruct[0]: Current State of Partition (1 Byte)
+    partitionEntryStruct[1]: Beginning of Partition - Head (1 Byte)
+    partitionEntryStruct[2]: Beginning of Partition - Cylinder/Sector (1 Word)
+    partitionEntryStruct[3]: Type of Partition (1 Byte)
+    partitionEntryStruct[4]: End of Partition - Head (1 Byte)
+    partitionEntryStruct[5]: End of Partition - Cylinder/Sector (1 Word)
+    partitionEntryStruct[6]: Number of Sectors between the MBR and the First
+                             Sector in the Partition (1 Double Word)
+    partitionEntryStruct[7]: Number of Sectors in the Partition (1 Double Word)
+    '''
     partitionEntryStruct = struct.Struct("bbhbbhii")
+
+    '''
+    The vbrStruct has 15 fields for the first 39 bytes of the VBR. This code
+    could be significantly cleaner, but Python was being dumb, so everything is
+    in terms of bytes, making it a pain to convert.
+
+
+    These fields are represented in the struct as:
+    vbrStruct[0:2]:   Assembly instruction to jump to boot code (3 Bytes)
+    vbrStruct[3:10]:  OEM Name in ASCII (8 Bytes)
+    vbrStruct[11:12]: Bytes per sector (2 Bytes)
+    vbrStruct[13]:    Sectors per cluster (1 Byte)
+    vbrStruct[14:15]: Size in sectors of the reserved area (2 Bytes)
+    vbrStruct[16]:    Number of FATs (1 Byte)
+    vbrStruct[17:18]: Maximum number of files in the root directory (2 bytes)
+    vbrStruct[19:20]: 16-bit value of number of sectors in FS (FAT32: 0) (2 Bytes)
+    vbrStruct[21]:    Media Type (1 Byte)
+    vbrStruct[22:23]: 16-bit size of sectors of each FAT (FAT32: 0) (2 Bytes)
+    vbrStruct[24:25]: Sectors per track (2 Bytes)
+    vbrStruct[26:27]: Number of heads (2 Bytes)
+    vbrStruct[28:31]: Number of sectors before the start of the partition (4 Bytes)
+    vbrStruct[32:35]: 32-bit value of number of sectors in FS (4 Bytes)
+    vbrStruct[36:39]: 32-bit size in sectors of one FAT (4 Bytes)
+    '''
     vbrStruct = struct.Struct("3b8b2bb2bb2b2bb2b2b2b4b4b4b")
 
     with open(filePath, "rb") as imageFile:
@@ -48,6 +85,7 @@ def analyzeImage(filePath):
         analyzePartitionEntry(partitionEntry2)
         analyzePartitionEntry(partitionEntry3)
 
+        #partitionEntryX[3] is the type of partition for partition number X
         if isFAT(partitionEntry0[3]):
             print '=' * 50
             fatVBR0 = vbrStruct.unpack(imageFileData[partitionEntry0[6]*512:partitionEntry0[6]*512+40])
@@ -68,36 +106,27 @@ def analyzeImage(filePath):
             fatVBR0 = vbrStruct.unpack(imageFileData[partitionEntry3[6]*512:partitionEntry3[6]*512+40])
             analyzeVBR(fatVBR0, 3, partitionEntry3[3], partitionEntry3[6])
 
-
+#Analyzes FAT16 and FAT32 VBRs
 def analyzeVBR(vbrStruct, partitionNumber, partitionType, partitionStart):
-    print "Partition " + str(partitionNumber) + "(" + typeOfPartition(partitionType) + "):"
 
     #Flip the order and put into binary for little endian, this took way too long to figure out
-    reserved2 =  bin(vbrStruct[15] & 0b11111111)
-    reserved1 =  bin(vbrStruct[14] & 0b11111111)
-
-    reserved2 = string.replace(reserved2, '0b', '').zfill(8)
-    reserved1 = string.replace(reserved1, '0b', '').zfill(8)
+    reserved2 =  convertToBinary(vbrStruct[15])
+    reserved1 =  convertToBinary(vbrStruct[14])
 
     reservedSize =  reserved2 + reserved1
 
     reservedSize = int(reservedSize, 2)
 
-    #Calculate FAT area for 32FAT partitions
+    #Calculate FAT area for FAT32 partitions
     if partitionType == 12 or partitionType == 11:
-        fat3 = bin(vbrStruct[39] & 0b11111111)
-        fat2 = bin(vbrStruct[38] & 0b11111111)
-        fat1 = bin(vbrStruct[37] & 0b11111111)
-        fat0 = bin(vbrStruct[36] & 0b11111111)
-
-        fat3 = string.replace(fat3, '0b', '').zfill(8)
-        fat2 = string.replace(fat2, '0b', '').zfill(8)
-        fat1 = string.replace(fat1, '0b', '').zfill(8)
-        fat0 = string.replace(fat0, '0b', '').zfill(8)
+        fat3 = convertToBinary(vbrStruct[39])
+        fat2 = convertToBinary(vbrStruct[38])
+        fat1 = convertToBinary(vbrStruct[37])
+        fat0 = convertToBinary(vbrStruct[36])
 
         fatArea = fat3 + fat2 + fat1 + fat0
 
-    #Calculate FAT area for 16FAT partitions
+    #Calculate FAT area for FAT16 partitions
     else:
         fat1 = bin(vbrStruct[23] & 0b11111111)
         fat0 = bin(vbrStruct[22] & 0b11111111)
@@ -112,19 +141,16 @@ def analyzeVBR(vbrStruct, partitionNumber, partitionType, partitionStart):
     fatSize = fatArea*2 + reservedSize - 1
 
     #Calculate number of sectors root directory uses
-    root1 = bin(vbrStruct[18] & 0b11111111)
-    root0 = bin(vbrStruct[17] & 0b11111111)
-
-    root1 = string.replace(root1, '0b', '').zfill(8)
-    root0 = string.replace(root0, '0b', '').zfill(8)
+    root1 = convertToBinary(vbrStruct[18])
+    root0 = convertToBinary(vbrStruct[17])
 
     numOfRootDirectories = root1 + root0
     numOfRootDirectories = int(numOfRootDirectories, 2)
     rootDirectorySize = numOfRootDirectories*32/512
 
+    addressOfCluster2 = reservedSize + fatArea*2 + rootDirectorySize + partitionStart
 
-    addressOfCluster2 = reservedSize + fatArea*2+rootDirectorySize + partitionStart
-
+    print "Partition " + str(partitionNumber) + "(" + typeOfPartition(partitionType) + "):"
     print "Reserved Area: Start sector: 0 Ending Sector: " + str(reservedSize-1) + " Size: " + \
           str(reservedSize) + " sectors"
     print "Sectors per cluster: " + str(vbrStruct[13]) + " sectors"
@@ -133,14 +159,14 @@ def analyzeVBR(vbrStruct, partitionNumber, partitionType, partitionStart):
     print "The size of each FAT: " + str(fatArea) + " sectors"
     print "The first sector of cluster 2: " + str(addressOfCluster2) + " sectors"
 
-    pass
-
+#Prints the data in a preformatted string to the console
 def analyzePartitionEntry(partitionStruct):
     print "(" + format(partitionStruct[3], '02x') + ") " + \
           typeOfPartition(partitionStruct[3]) + ", " + str(partitionStruct[6]).zfill(10) + ", " +\
           str(partitionStruct[7]).zfill(10)
-    pass
 
+
+#Returns the type of partition
 def typeOfPartition(value):
     if value == 1:
         return "DOS 12-bit FAT"
@@ -193,11 +219,24 @@ def typeOfPartition(value):
     else:
         return "Not a recognized partition type"
 
+#Determines if value in partitiony entry corresponds to a FAT16/32 value
 def isFAT(partitionType):
     if partitionType == 4 or partitionType == 6 or partitionType == 11 or partitionType == 12:
         return True
     else:
         return False
+
+#It's main, it calls the other functions.
+def main():
+    filePath = sys.argv[1]
+    printCheckSums(filePath)
+    analyzeImage(filePath)
+
+#Converts a byte to a binary bit string
+def convertToBinary(byteToConvert):
+    binaryString = bin(byteToConvert & 0b11111111)
+    binaryString = string.replace(binaryString, '0b', '').zfill(8)
+    return binaryString
 
 if __name__== "__main__":
     main()
